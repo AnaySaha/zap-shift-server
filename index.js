@@ -1,30 +1,44 @@
-const express = require('express');
-const cors = require('cors');
-
-
-const dotenv = require('dotenv');
-const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const express = require("express");
+const cors = require("cors");
+const dotenv = require("dotenv");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const admin = require("firebase-admin");
-
-const stripe = require('stripe');
+const stripe = require("stripe");
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Initialize Stripe
-const stripeClient = stripe(process.env.PAYMENT_GATEWAY_KEY);
+/* ================= MIDDLEWARE ================= */
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "https://your-frontend.vercel.app"
+  ],
+  credentials: true
+}));
 
-// Middlewares
-app.use(cors());
 app.use(express.json());
 
-const decodedKey = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8');
+/* ================= STRIPE ================= */
+const stripeClient = stripe(process.env.PAYMENT_GATEWAY_KEY);
+
+/* ================= FIREBASE ================= */
+const decodedKey = Buffer.from(
+  process.env.FB_SERVICE_KEY,
+  "base64"
+).toString("utf8");
 
 const serviceAccount = JSON.parse(decodedKey);
 
-// MongoDB connection
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+}
+
+/* ================= MONGODB ================= */
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.y56bxor.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -35,80 +49,68 @@ const client = new MongoClient(uri, {
   },
 });
 
-async function run() {
+let db;
+let usersCollection;
+let parcelCollection;
+let paymentCollection;
+let trackingCollection;
+let ridersCollection;
+let riderEarningsCollection;
+
+/* ✅ CONNECT ONCE */
+async function connectDB() {
+  if (db) return;
+
+  await client.connect();
+  db = client.db("parcelDB");
+
+  usersCollection = db.collection("users");
+  parcelCollection = db.collection("parcels");
+  paymentCollection = db.collection("payments");
+  trackingCollection = db.collection("trackings");
+  ridersCollection = db.collection("riders");
+  riderEarningsCollection = db.collection("riderEarnings");
+
+  console.log("✅ MongoDB Connected");
+}
+
+connectDB().catch(console.error);
+
+/* ================= AUTH MIDDLEWARE ================= */
+const verifyFBToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(401).send({ message: "Unauthorized" });
+
+  const token = authHeader.split(" ")[1];
   try {
-    await client.connect();
-
-    const db = client.db('parcelDB');
-    const usersCollection = db.collection('users')
-    const parcelCollection = db.collection('parcels');
-    const paymentCollection = db.collection('payments');
-    const trackingCollection = db.collection('trackings');
-    const ridersCollection = db.collection('riders');
-
-
-    // custom middlewares
-
-
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
-
-
-
-    const verifyFBToken = async(req, res, next) => {
-     const authHeader = req.headers.authorization;
-     if(!authHeader){
-      return res.status(401).send({message: 'unauthoized access'})
-     }
-
-     const token = authHeader.split(' ')[1];
-     if(!token){
-       return res.status(401).send({message: 'unauthoized access'})
-     }
-
-    //  verify the token
-
-    try{
-      const decoded = await admin.auth().verifyIdToken(token);
-      req.decoded = decoded;
-    }
-
-    catch (error){
-       return res.status(403).send({message: 'forbidden'})
-    }
-
-      next();
-    }
-
-
-    // search user // make user admin // remove admin
-
-    // helper: ensure req.decoded exists (verifyFBToken middleware should be applied before these)
-const verifyAdmin = async (req, res, next) => {
-  try {
-    // require verifyFBToken before this middleware so req.decoded.email exists
-    const requesterEmail = req.decoded?.email;
-    if (!requesterEmail) return res.status(401).send({ message: "Unauthorized" });
-
-    const adminUser = await usersCollection.findOne({ email: requesterEmail.toLowerCase() });
-    if (!adminUser || adminUser.role !== "admin") {
-      return res.status(403).send({ message: "Forbidden — admin only" });
-    }
+    const decoded = await admin.auth().verifyIdToken(token);
+    req.decoded = decoded;
     next();
-  } catch (err) {
-    console.error("verifyAdmin error:", err);
-    res.status(500).send({ message: "Server error" });
+  } catch {
+    res.status(403).send({ message: "Forbidden" });
   }
 };
 
+const verifyAdmin = async (req, res, next) => {
+  const email = req.decoded?.email?.toLowerCase();
+  if (!email) return res.status(401).send({ message: "Unauthorized" });
 
+  const user = await usersCollection.findOne({ email });
+  if (user?.role !== "admin") {
+    return res.status(403).send({ message: "Admin only" });
+  }
+  next();
+};
 
+/* ================= ROUTES ================= */
 
+// HEALTH
+app.get("/", (req, res) => {
+  res.send("🚀 Parcel server is running successfully!");
+});
 
+/* ===== USERS ===== */
 
-    // SEARCH USER BY EMAIL (partial match allowed)
 
 // GET /users/search?query=<text>
 app.get("/users/search", async (req, res) => {
@@ -188,14 +190,6 @@ app.get("/users/role/:email", verifyFBToken, async (req, res) => {
 });
 
 
-
-
-
-
-
-
-
-
 app.post('/users', async (req, res) => {
   const email = req.body.email.toLowerCase();
   const userExists = await usersCollection.findOne({ email });
@@ -207,8 +201,6 @@ app.post('/users', async (req, res) => {
   const result = await usersCollection.insertOne(user);
   res.send(result);
 });
-
-
 
 
     // ✅ Get all or user-specific parcels
@@ -276,8 +268,6 @@ app.post('/users', async (req, res) => {
     });
 
 
-
-    
 
 app.post('/riders', async (req, res) => {
   const riderEmail = req.body.email.toLowerCase();
@@ -696,8 +686,7 @@ app.get("/admin/dashboard-stats", async (req, res) => {
 
 
 
-app.patch(
-  "/parcels/:id/status",
+app.patch("/parcels/:id/status",
   verifyFBToken,
   async (req, res) => {
     const { id } = req.params;
@@ -851,112 +840,6 @@ app.post("/rider/cashout", verifyFBToken, async (req, res) => {
 });
 
 
-// app.post("/rider/cashout", verifyFBToken, async (req, res) => {
-//   const email = req.decoded.email;
-//   const { amount } = req.body;
-
-//   if (!amount || amount <= 0) {
-//     return res.status(400).send({ message: "Invalid cash out amount" });
-//   }
-
-//   const unpaidEarnings = await db
-//     .collection("riderEarnings")
-//     .find({ riderEmail: email, status: "unpaid" })
-//     .sort({ createdAt: 1 }) // oldest first
-//     .toArray();
-
-//   const totalUnpaid = unpaidEarnings.reduce(
-//     (sum, e) => sum + e.amount,
-//     0
-//   );
-
-//   if (amount > totalUnpaid) {
-//     return res
-//       .status(400)
-//       .send({ message: "Amount exceeds unpaid balance" });
-//   }
-
-//   let remainingToPay = amount;
-//   const paidIds = [];
-
-//   for (const earning of unpaidEarnings) {
-//     if (remainingToPay <= 0) break;
-
-//     paidIds.push(earning._id);
-//     remainingToPay -= earning.amount;
-//   }
-
-//   await db.collection("riderEarnings").updateMany(
-//     { _id: { $in: paidIds } },
-//     {
-//       $set: {
-//         status: "paid",
-//         paidAt: new Date(),
-//       },
-//     }
-//   );
-
-//   res.send({
-//     success: true,
-//     paidAmount: amount,
-//     remainingBalance: totalUnpaid - amount,
-//   });
-// });
-
-
-
-
-
-
-//   const email = req.decoded.email.toLowerCase();
-
-//   // Get delivered parcels for this rider
-//   const parcels = await parcelCollection.find({
-//     assigned_rider_email: email,
-//     delivery_status: "delivered",
-//     cashedOut: { $ne: true } // not cashed out yet
-//   }).toArray();
-
-//   if (parcels.length === 0) {
-//     return res.status(400).send({ message: "No earnings to cash out" });
-//   }
-
-//   let totalAmount = 0;
-
-//   parcels.forEach(parcel => {
-//     const sameRegion = parcel.senderRegion === parcel.receiverRegion;
-//     const percentage = sameRegion ? 0.8 : 0.3;
-//     totalAmount += Math.round(parcel.cost * percentage);
-//   });
-
-//   // Mark parcels as cashed out
-//   const parcelIds = parcels.map(p => p._id);
-
-//   await parcelCollection.updateMany(
-//     { _id: { $in: parcelIds } },
-//     {
-//       $set: {
-//         cashedOut: true,
-//         cashedOutAt: new Date(),
-//       },
-//     }
-//   );
-
-//   res.send({
-//     success: true,
-//     paidAmount: totalAmount,
-//   });
-// });
-
-
-
-
-
-
-
-
-
-
     // ✅ Get payment history (user or all for admin)
     app.get('/payments', verifyFBToken, async (req, res) => {
 
@@ -1044,24 +927,14 @@ app.post('/create-payment-intent', async (req, res) => {
   }
 });
 
-
-
-    // ✅ MongoDB connection test
-    // await client.db("admin").command({ ping: 1 });
-    console.log("✅ Successfully connected to MongoDB");
-  } catch (error) {
-    console.error("❌ MongoDB connection failed:", error);
-  }
-}
-
-run().catch(console.dir);
-
-// ✅ Root route
-app.get("/", (req, res) => {
-  res.send("🚀 Parcel server is running successfully!");
-});
-
-// ✅ Start server
+/* ================= SERVER ================= */
 app.listen(port, () => {
-  console.log(`✅ Server is running on port ${port}`);
+  console.log(`✅ Server running on port ${port}`);
 });
+
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).send({ message: "Internal Server Error" });
+});
+
+
