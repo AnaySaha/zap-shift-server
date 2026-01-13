@@ -57,6 +57,14 @@ let trackingCollection;
 let ridersCollection;
 let riderEarningsCollection;
 
+const ensureDB = async (req, res, next) => {
+  if (!db) {
+    return res.status(503).send({ message: "Database not ready" });
+  }
+  next();
+};
+
+
 /* ✅ CONNECT ONCE */
 async function connectDB() {
   if (db) return;
@@ -622,7 +630,7 @@ app.get("/my-parcels", verifyFBToken, async (req, res) => {
 
 
 
-app.get("/admin/dashboard-stats", async (req, res) => {
+app.get("/admin/dashboard-stats", ensureDB, async (req, res) => {
   try {
     const parcelsCollection = db.collection("parcels");
 
@@ -673,8 +681,10 @@ app.get("/admin/dashboard-stats", async (req, res) => {
 
     res.send(stats[0]);
   } catch (error) {
-    console.error(error);
-    res.status(500).send({ message: "Failed to load admin stats" });
+    console.error("Admin Stats Error", error);
+    res.status(500).send({ message: "Failed to load admin stats",
+      error: error.message
+     });
   }
 });
 
