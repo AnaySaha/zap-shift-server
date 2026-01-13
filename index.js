@@ -220,7 +220,7 @@ app.post('/users', async (req, res) => {
     });
 
     // ✅ Create a new parcel
-    app.post("/parcels", async (req, res) => {
+    app.post("/parcels", verifyFBToken, async (req, res) => {
       try {
         const newParcel = { ...req.body, createdAt: new Date() };
         const result = await parcelCollection.insertOne(newParcel);
@@ -330,7 +330,7 @@ app.get("/riders/pending", verifyFBToken, async (req, res) => {
 
 
 
-app.patch("/riders/reject/:id", async (req, res) => {
+app.patch("/riders/reject/:id", verifyAdmin, verifyFBToken, async (req, res) => {
   const id = req.params.id;
   const result = await ridersCollection.updateOne(
     { _id: new ObjectId(id) },
@@ -367,7 +367,7 @@ app.get("/riders/active", verifyFBToken, verifyAdmin, async (req, res) => {
 
     // update user role for accepting rider
 
-   app.patch("/riders/approve/:id", async (req, res) => {
+   app.patch("/riders/approve/:id", verifyFBToken, verifyAdmin, async (req, res) => {
   try {
     const riderId = req.params.id;
     const rider = await ridersCollection.findOne({ _id: new ObjectId(riderId) });
@@ -571,7 +571,7 @@ app.get('/rider/completed', verifyFBToken, async (req, res) => {
 
 // parcels tracking
 
-app.post("/trackings", async (req, res) => {
+app.post("/trackings", verifyFBToken, async (req, res) => {
   const {
     tracking_id,
     status,
@@ -865,7 +865,7 @@ app.post("/rider/cashout", verifyFBToken, async (req, res) => {
     });
 
     // ✅ Save payment + mark parcel as paid
- app.post('/payments', async (req, res) => {
+ app.post('/payments', verifyFBToken, async (req, res) => {
   try {
     const payment = req.body;
 
